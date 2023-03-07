@@ -1,59 +1,47 @@
 #include "pch.h"
 #include "ReflectiveLib.h"
-#include <stdio.h>
 
 ULONG_PTR GetModuleHandleByHash(DWORD moduleHash)
 {
     PUNICODE_STRING pBaseDllName;
-    DWORD nLdrOffset = 0;
-    PPEB_LDR_DATA pLdrData = nullptr;
-    PLDR_DATA_TABLE_ENTRY pLdrDataTable = nullptr;
-    PLDR_DATA_TABLE_ENTRY pLdrDataTableFirst = nullptr;
-    ULONG_PTR pModule = NULL;
+    PPEB_LDR_DATA pLdrData;
+    PLDR_DATA_TABLE_ENTRY pLdrDataTable;
+    ULONG_PTR pModule = 0;
 
 #ifdef _WIN64
     pLdrData = (PPEB_LDR_DATA)(*(PULONG_PTR)((ULONG_PTR)__readgsqword(0x60) + 0x18));
-    pLdrDataTableFirst = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrData->InMemoryOrderModuleList.Flink - 0x10);
+    pLdrDataTable = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrData->InMemoryOrderModuleList.Flink - 0x10);
 #elif _WIN32
     pLdrData = (PPEB_LDR_DATA)(*(PULONG_PTR)((ULONG_PTR)__readfsdword(0x30) + 0xC));
-    pLdrDataTableFirst = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrData->InMemoryOrderModuleList.Flink - 0x8);
+    pLdrDataTable = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrData->InMemoryOrderModuleList.Flink - 0x8);
 #else
     return nullptr;
 #endif
 
-    do
+    while (pLdrDataTable->DllBase != NULL)
     {
-        pLdrDataTable = pLdrDataTableFirst;
+#ifdef _WIN64
+        pBaseDllName = (PUNICODE_STRING)((ULONG_PTR)pLdrDataTable + 0x58);
+#elif _WIN32
+        pBaseDllName = (PUNICODE_STRING)((ULONG_PTR)pLdrDataTable + 0x2C);
+#else
+        break;
+#endif
 
-        do
+        if (CalcHash((ULONG_PTR)pBaseDllName->Buffer, pBaseDllName->Length) == moduleHash)
         {
-#ifdef _WIN64
-            pBaseDllName = (PUNICODE_STRING)((ULONG_PTR)pLdrDataTable + 0x58);
-#elif _WIN32
-            pBaseDllName = (PUNICODE_STRING)((ULONG_PTR)pLdrDataTable + 0x2C);
-#else
+            pModule = (ULONG_PTR)pLdrDataTable->DllBase;
             break;
-#endif
-
-            if (CalcHash((ULONG_PTR)pBaseDllName->Buffer, pBaseDllName->Length) == moduleHash)
-            {
-#ifdef _WIN64
-                pModule = *(PULONG_PTR)((ULONG_PTR)pLdrDataTable + 0x30);
-#elif _WIN32
-                pModule = *(PULONG_PTR)((ULONG_PTR)pLdrDataTable + 0x18);
-#endif
-                break;
-            }
+        }
 
 #ifdef _WIN64
-            pLdrDataTable = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrDataTable->InMemoryOrderLinks.Flink - 0x10);
+        pLdrDataTable = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrDataTable->InMemoryOrderLinks.Flink - 0x10);
 #elif _WIN32
-            pLdrDataTable = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrDataTable->InMemoryOrderLinks.Flink - 0x8);
+        pLdrDataTable = (PLDR_DATA_TABLE_ENTRY)((ULONG_PTR)pLdrDataTable->InMemoryOrderLinks.Flink - 0x8);
 #else
-            break;
+        break;
 #endif
-        } while (pLdrDataTable != pLdrDataTableFirst);
-    } while (FALSE);
+    }
 
     return pModule;
 }
@@ -72,7 +60,7 @@ ULONG_PTR GetProcAddressByHash(ULONG_PTR hModule, DWORD procHash)
     ULONG_PTR pAddressOfNames;
     ULONG_PTR pAddressOfOrdinals;
     LPCSTR procName;
-    ULONG_PTR pProc = NULL;
+    ULONG_PTR pProc = 0;
 
     do
     {
@@ -121,14 +109,16 @@ ULONG_PTR GetProcAddressByHash(ULONG_PTR hModule, DWORD procHash)
 
 
 extern "C"
-_declspec(dllexport) ULONG_PTR ReflectiveEntry(ULONG_PTR pEnvironment)
+_declspec(dllexport)
+ULONG_PTR ReflectiveEntry(ULONG_PTR pEnvironment)
 {
+    NTSTATUS ntstatus;
     ULONG_PTR pKernel32;
     ULONG_PTR pNtdll;
     ULONG_PTR pLoadLibraryA;
     ULONG_PTR pGetProcAddress;
-    ULONG_PTR pVirtualAlloc;
-    ULONG_PTR pVirtualProtect;
+    ULONG_PTR pNtAllocateVirtualMemory;
+    ULONG_PTR pNtProtectVirtualMemory;
     ULONG_PTR pNtFlushInstructionCache;
     ULONG_PTR pInstructions;
     ULONG_PTR pImageBase;
@@ -142,8 +132,8 @@ _declspec(dllexport) ULONG_PTR ReflectiveEntry(ULONG_PTR pEnvironment)
     ULONG_PTR pEntryPoint;
     ULONG protect;
     SIZE_T nImageSize;
+    SIZE_T nDataSize;
     DWORD nSections;
-    DWORD nDataSize;
     DWORD nRelocations;
     PIMAGE_DOS_HEADER pImageDosHeader;
     PIMAGE_NT_HEADERS pImageNtHeaders;
@@ -177,14 +167,14 @@ _declspec(dllexport) ULONG_PTR ReflectiveEntry(ULONG_PTR pEnvironment)
     if (!pGetProcAddress)
         return NULL;
 
-    pVirtualAlloc = GetProcAddressByHash(pKernel32, VIRTUALALLOC_HASH);
+    pNtAllocateVirtualMemory = GetProcAddressByHash(pNtdll, NTALLOCATEVIRTUALMEMORY_HASH);
 
-    if (!pVirtualAlloc)
+    if (!pNtAllocateVirtualMemory)
         return NULL;
 
-    pVirtualProtect = GetProcAddressByHash(pKernel32, VIRTUALPROTECT_HASH);
+    pNtProtectVirtualMemory = GetProcAddressByHash(pNtdll, NTPROTECTVIRTUALMEMORY_HASH);
 
-    if (!pVirtualProtect)
+    if (!pNtProtectVirtualMemory)
         return NULL;
 
     pNtFlushInstructionCache = GetProcAddressByHash(pNtdll, NTFLUSHINSTRUCTIONCACHE_HASH);
@@ -195,22 +185,28 @@ _declspec(dllexport) ULONG_PTR ReflectiveEntry(ULONG_PTR pEnvironment)
     /*
     * Step 2 : Search base address of this image data
     */
-    pInstructions = ((VirtualAlloc_t)pVirtualAlloc)(
+    pInstructions = NULL;
+    nDataSize = sizeof(DWORD);
+    ntstatus = ((NtAllocateVirtualMemory_t)pNtAllocateVirtualMemory)(
+        (HANDLE)-1,
+        &pInstructions,
         NULL,
-        sizeof(DWORD),
+        &nDataSize,
         MEM_COMMIT | MEM_RESERVE,
         PAGE_READWRITE);
 
-    if (pInstructions == NULL)
+    if (ntstatus != STATUS_SUCCESS)
         return NULL;
 
     // For 32bit => pop eax; push eax; ret
     // For 64bit => pop rax; push rax; ret
     *(DWORD*)pInstructions = 0x00C35058;
+    nDataSize = sizeof(DWORD);
 
-    ((VirtualProtect_t)pVirtualProtect)(
-        pInstructions,
-        sizeof(DWORD),
+    ((NtProtectVirtualMemory_t)pNtProtectVirtualMemory)(
+        (HANDLE)-1,
+        &pInstructions,
+        &nDataSize,
         PAGE_EXECUTE_READ,
         &protect);
 
@@ -243,9 +239,12 @@ _declspec(dllexport) ULONG_PTR ReflectiveEntry(ULONG_PTR pEnvironment)
     /*
     * Step 4 : Parse this DLL's data to new memory
     */
-    pModuleBuffer = ((VirtualAlloc_t)pVirtualAlloc)(
+    pModuleBuffer = NULL;
+    ntstatus = ((NtAllocateVirtualMemory_t)pNtAllocateVirtualMemory)(
+        (HANDLE)-1,
+        &pModuleBuffer,
         NULL,
-        nImageSize,
+        &nImageSize,
         MEM_COMMIT | MEM_RESERVE,
         PAGE_READWRITE);
 
@@ -380,9 +379,10 @@ _declspec(dllexport) ULONG_PTR ReflectiveEntry(ULONG_PTR pEnvironment)
             continue;
         }
 
-        ((VirtualProtect_t)pVirtualProtect)(
-            pDestination,
-            (SIZE_T)nDataSize,
+        ((NtProtectVirtualMemory_t)pNtProtectVirtualMemory)(
+            (HANDLE)-1,
+            &pDestination,
+            &nDataSize,
             protect,
             &protect);
     }

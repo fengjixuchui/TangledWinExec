@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("CalcRor13Hash")]
+[assembly: AssemblyTitle("PeRipper")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Razer")]
-[assembly: AssemblyProduct("CalcRor13Hash")]
+[assembly: AssemblyProduct("PeRipper")]
 [assembly: AssemblyCopyright("Copyright © Razer 2023")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
@@ -20,7 +20,7 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
-[assembly: Guid("a3e22f09-19aa-4758-998f-4b16a1c9dc3f")]
+[assembly: Guid("d22a848c-c04e-427d-8521-1f2a3568380d")]
 
 // Version information for an assembly consists of the following four values:
 //
